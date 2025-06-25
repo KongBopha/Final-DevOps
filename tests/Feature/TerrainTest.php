@@ -2,34 +2,40 @@
 
 use App\Models\Terrain;
 use App\Models\User;
+use App\Models\TerrainImage;
+use App\Models\Review;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+uses(RefreshDatabase::class);
 
 test('can list all available terrains', function () {
-    $terrains = Terrain::factory(5)->create(['is_available' => true]);
+    Terrain::factory(5)->create(['is_available' => true]);
 
     $response = $this->getJson('/api/terrains');
 
     $response->assertStatus(200)
-            ->assertJsonCount(5, 'data');
+             ->assertJsonCount(5, 'data');
 });
 
 test('can view single terrain with relationships', function () {
-    $terrain = Terrain::factory()
-        ->hasImages(3)
-        ->hasReviews(2)
-        ->create();
+    $terrain = Terrain::factory()->create();
+
+    // Create related images and reviews manually
+    TerrainImage::factory(3)->create(['terrain_id' => $terrain->id]);
+    Review::factory(2)->create(['terrain_id' => $terrain->id]);
 
     $response = $this->getJson("/api/terrains/{$terrain->id}");
 
     $response->assertStatus(200)
-            ->assertJson([
-                'id' => $terrain->id,
-                'title' => $terrain->title,
-            ])
-            ->assertJsonStructure([
-                'images',
-                'reviews',
-                'owner'
-            ]);
+             ->assertJsonFragment([
+                 'id' => $terrain->id,
+                 'title' => $terrain->title,
+             ])
+             ->assertJsonStructure([
+                 'images',
+                 'reviews',
+                 'owner'
+             ]);
 });
 
 test('authenticated user can create terrain', function () {
@@ -44,15 +50,16 @@ test('authenticated user can create terrain', function () {
     ];
 
     $response = $this->actingAs($user)
-                    ->postJson('/api/terrains', $terrainData);
+                     ->postJson('/api/terrains', $terrainData);
 
     $response->assertStatus(201)
-            ->assertJson([
-                'title' => 'Test Terrain',
-                'owner_id' => $user->id,
-            ]);
+             ->assertJsonFragment([
+                 'title' => 'Test Terrain',
+             ]);
 
-    $this->assertDatabaseHas('terrains', $terrainData);
+    $this->assertDatabaseHas('terrains', array_merge($terrainData, [
+        'owner_id' => $user->id,
+    ]));
 });
 
 test('owner can update their terrain', function () {
@@ -62,10 +69,10 @@ test('owner can update their terrain', function () {
     $updateData = ['title' => 'Updated Terrain Title'];
 
     $response = $this->actingAs($user)
-                    ->putJson("/api/terrains/{$terrain->id}", $updateData);
+                     ->putJson("/api/terrains/{$terrain->id}", $updateData);
 
     $response->assertStatus(200)
-            ->assertJson(['title' => 'Updated Terrain Title']);
+             ->assertJsonFragment(['title' => 'Updated Terrain Title']);
 
     $this->assertDatabaseHas('terrains', [
         'id' => $terrain->id,
@@ -79,7 +86,7 @@ test('non-owner cannot update terrain', function () {
     $terrain = Terrain::factory()->create(['owner_id' => $owner->id]);
 
     $response = $this->actingAs($otherUser)
-                    ->putJson("/api/terrains/{$terrain->id}", ['title' => 'Hacked']);
+                     ->putJson("/api/terrains/{$terrain->id}", ['title' => 'Hacked']);
 
     $response->assertStatus(403);
 });

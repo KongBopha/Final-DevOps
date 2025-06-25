@@ -1,13 +1,10 @@
 <?php
 
 use App\Http\Controllers\TerrainController;
-use App\Http\Controllers\BookingController;
-use Illuminate\Support\Facades\Route;
-
-Route::apiResource('terrains', TerrainController::class);
-Route::apiResource('bookings', BookingController::class)->middleware('auth:sanctum');
 
 Route::middleware('auth:sanctum')->group(function () {
-    Route::post('terrains/{terrain}/favorite', [TerrainController::class, 'favorite']);
-    Route::delete('terrains/{terrain}/favorite', [TerrainController::class, 'unfavorite']);
+    Route::get('/terrains', [TerrainController::class, 'index']);
+    Route::get('/terrains/{id}', [TerrainController::class, 'show']);
+    Route::post('/terrains', [TerrainController::class, 'store']);
+    Route::put('/terrains/{id}', [TerrainController::class, 'update']);
 });

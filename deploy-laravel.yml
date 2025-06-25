@@ -1,0 +1,113 @@
+---
+- name: Laravel Deployment Pipeline
+  hosts: all
+  become: yes
+  vars:
+    project_path: /var/www/html
+    backup_path: /var/backups/mysql
+    db_name: bopha-db
+    db_user: root
+    db_password: Hello@123
+  
+  tasks:
+    - name: Check if Kubernetes CLI is installed
+      block:
+        - name: Install kubectl if missing
+          apt:
+            name: kubectl
+            state: present
+          when: ansible_pkg_mgr == 'apt'
+          
+        - name: Install kubectl if missing (yum)
+          yum:
+            name: kubectl
+            state: present
+          when: ansible_pkg_mgr == 'yum'
+
+    - name: Get web server pod name
+      command: kubectl get pods -l app=web-server -o jsonpath='{.items[0].metadata.name}'
+      register: web_pod
+      changed_when: false
+
+    - name: Get mysql pod name
+      command: kubectl get pods -l app=mysql -o jsonpath='{.items[0].metadata.name}'
+      register: mysql_pod
+      changed_when: false
+
+    - name: Check for local git changes
+      command: kubectl exec {{ web_pod.stdout }} -- git status --porcelain
+      register: git_status
+      changed_when: git_status.stdout != ""
+      failed_when: false
+
+    - name: Fail if local changes exist
+      fail:
+        msg: "Local changes detected. Please commit or stash changes before deployment."
+      when: git_status.stdout != ""
+
+    - name: Pull latest code
+      command: kubectl exec {{ web_pod.stdout }} -- git -C {{ project_path }} pull origin main
+      register: git_pull
+      changed_when: "'Already up to date' not in git_pull.stdout"
+
+    - name: Install Composer dependencies
+      command: kubectl exec {{ web_pod.stdout }} -- composer install --optimize-autoloader --no-dev
+      changed_when: true
+
+    - name: Install NPM dependencies and build assets
+      command: kubectl exec {{ web_pod.stdout }} -- npm install && npm run production
+      changed_when: true
+
+    - name: Set up testing environment
+      command: kubectl exec {{ web_pod.stdout }} -- cp .env.testing .env
+      changed_when: true
+
+    - name: Create testing database (SQLite)
+      command: kubectl exec {{ web_pod.stdout }} -- touch database/testing.sqlite
+      changed_when: true
+
+    - name: Run database migrations for tests
+      command: kubectl exec {{ web_pod.stdout }} -- php artisan migrate --database=sqlite
+      changed_when: true
+
+    - name: Run PHPUnit tests
+      command: kubectl exec {{ web_pod.stdout }} -- php artisan test --env=testing
+      register: test_results
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display test results
+      debug:
+        var: test_results.stdout_lines
+
+    - name: Fail if tests didn't pass
+      fail:
+        msg: "Tests failed. Deployment aborted."
+      when: test_results.rc != 0
+
+    - name: Create backup directory
+      file:
+        path: "{{ backup_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup MySQL database
+      command: kubectl exec {{ mysql_pod.stdout }} -- mysqldump -u {{ db_user }} -p{{ db_password }} {{ db_name }} > "{{ backup_path }}/{{ db_name }}-$(date +\%Y\%m\%d-\%H\%M\%S).sql"
+      changed_when: true
+      register: backup_result
+      ignore_errors: true
+
+    - name: Verify backup
+      stat:
+        path: "{{ backup_path }}/{{ db_name }}-*.sql"
+      register: backup_files
+      changed_when: false
+
+    - name: Display backup info
+      debug:
+        msg: "Database backup created: {{ backup_files.stat.exists }}"
+      
+    - name: Clean up old backups (keep last 5)
+      command: ls -t {{ backup_path }}/{{ db_name }}-*.sql | tail -n +6 | xargs rm -f
+      changed_when: false
+      when: backup_files.stat.exists

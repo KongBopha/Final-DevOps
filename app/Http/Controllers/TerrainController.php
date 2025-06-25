@@ -10,11 +10,8 @@ class TerrainController extends Controller
 {
     public function index(): JsonResponse
     {
-        $terrains = Terrain::with(['owner', 'images', 'reviews'])
-            ->where('is_available', true)
-            ->paginate(10);
-
-        return response()->json($terrains);
+$terrains = Terrain::where('is_available', true)->get();
+    return response()->json(['data' => $terrains], 200);
     }
 
     public function show(Terrain $terrain): JsonResponse
